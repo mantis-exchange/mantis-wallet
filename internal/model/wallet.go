@@ -100,6 +100,26 @@ func (r *WalletRepo) GetDepositAddress(ctx context.Context, userID uuid.UUID, ch
 	return a, nil
 }
 
+func (r *WalletRepo) ListDepositAddresses(ctx context.Context) ([]Address, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, user_id, chain, address, type, created_at
+		 FROM addresses WHERE type = 'DEPOSIT'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var addrs []Address
+	for rows.Next() {
+		var a Address
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Chain, &a.Address, &a.Type, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, a)
+	}
+	return addrs, nil
+}
+
 func (r *WalletRepo) CreateDeposit(ctx context.Context, d *Deposit) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO deposits (id, user_id, chain, asset, tx_hash, amount, confirmations, status, created_at, updated_at)

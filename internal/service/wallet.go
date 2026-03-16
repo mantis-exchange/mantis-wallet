@@ -8,16 +8,18 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mantis-exchange/mantis-wallet/internal/chain"
+	"github.com/mantis-exchange/mantis-wallet/internal/client"
 	"github.com/mantis-exchange/mantis-wallet/internal/model"
 )
 
 type WalletService struct {
-	repo *model.WalletRepo
-	eth  *chain.EthereumClient
+	repo    *model.WalletRepo
+	eth     *chain.EthereumClient
+	account *client.AccountClient
 }
 
-func NewWalletService(repo *model.WalletRepo, eth *chain.EthereumClient) *WalletService {
-	return &WalletService{repo: repo, eth: eth}
+func NewWalletService(repo *model.WalletRepo, eth *chain.EthereumClient, account *client.AccountClient) *WalletService {
+	return &WalletService{repo: repo, eth: eth, account: account}
 }
 
 func (s *WalletService) GetOrCreateDepositAddress(ctx context.Context, userID uuid.UUID, chainName string) (*model.Address, error) {
@@ -27,7 +29,7 @@ func (s *WalletService) GetOrCreateDepositAddress(ctx context.Context, userID uu
 	}
 
 	// Generate new address
-	var address, _ string
+	var address string
 	switch chainName {
 	case "ETH", "ERC20":
 		address, _, err = s.eth.GenerateAddress()
@@ -55,6 +57,16 @@ func (s *WalletService) GetOrCreateDepositAddress(ctx context.Context, userID uu
 }
 
 func (s *WalletService) RequestWithdrawal(ctx context.Context, userID uuid.UUID, chainName, asset, toAddress, amount, fee string) (*model.Withdrawal, error) {
+	// Freeze and deduct balance before creating the withdrawal record
+	if err := s.account.FreezeBalance(ctx, userID.String(), asset, amount); err != nil {
+		return nil, fmt.Errorf("insufficient balance: %w", err)
+	}
+	if err := s.account.DeductFrozenBalance(ctx, userID.String(), asset, amount); err != nil {
+		// Attempt to unfreeze on failure
+		_ = s.account.UnfreezeBalance(ctx, userID.String(), asset, amount)
+		return nil, fmt.Errorf("failed to deduct balance: %w", err)
+	}
+
 	now := time.Now()
 	w := &model.Withdrawal{
 		ID:        uuid.New(),
@@ -73,8 +85,15 @@ func (s *WalletService) RequestWithdrawal(ctx context.Context, userID uuid.UUID,
 		return nil, err
 	}
 
-	// TODO: Deduct balance via account service
 	return w, nil
+}
+
+func (s *WalletService) ListPendingWithdrawals(ctx context.Context) ([]model.Withdrawal, error) {
+	return s.repo.ListWithdrawalsByStatus(ctx, model.WithdrawalPending, 100)
+}
+
+func (s *WalletService) UpdateWithdrawalStatus(ctx context.Context, id uuid.UUID, status string) error {
+	return s.repo.UpdateWithdrawalStatus(ctx, id, model.WithdrawalStatus(status), "")
 }
 
 func (s *WalletService) ProcessPendingWithdrawals(ctx context.Context) error {

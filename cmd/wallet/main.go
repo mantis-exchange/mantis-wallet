@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mantis-exchange/mantis-wallet/internal/chain"
+	"github.com/mantis-exchange/mantis-wallet/internal/client"
 	"github.com/mantis-exchange/mantis-wallet/internal/config"
 	"github.com/mantis-exchange/mantis-wallet/internal/handler"
 	"github.com/mantis-exchange/mantis-wallet/internal/model"
@@ -27,10 +28,12 @@ func main() {
 
 	repo := model.NewWalletRepo(pool)
 	eth := chain.NewEthereumClient(cfg.ETHNode)
-	walletService := service.NewWalletService(repo, eth)
+	accountClient := client.NewAccountClient(cfg.AccountServiceAddr)
+	walletService := service.NewWalletService(repo, eth, accountClient)
 
 	// Start deposit scanner
-	go eth.ScanDeposits()
+	scanner := service.NewDepositScanner(repo, eth, accountClient)
+	go scanner.Start()
 
 	// Process approved withdrawals periodically
 	go func() {
@@ -49,6 +52,13 @@ func main() {
 	{
 		api.GET("/deposit-address", h.GetDepositAddress)
 		api.POST("/withdraw", h.RequestWithdrawal)
+	}
+
+	// Admin routes (internal, no auth)
+	admin := r.Group("/internal/v1")
+	{
+		admin.GET("/withdrawals/pending", h.ListPendingWithdrawals)
+		admin.PUT("/withdrawals/:id", h.UpdateWithdrawalStatus)
 	}
 
 	srv := &http.Server{

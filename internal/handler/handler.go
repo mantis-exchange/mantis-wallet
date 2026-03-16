@@ -42,6 +42,52 @@ type withdrawReq struct {
 	Amount  string `json:"amount" binding:"required"`
 }
 
+func (h *Handler) ListPendingWithdrawals(c *gin.Context) {
+	withdrawals, err := h.wallet.ListPendingWithdrawals(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"withdrawals": withdrawals})
+}
+
+type approveReq struct {
+	Action string `json:"action" binding:"required"` // "approve" or "reject"
+}
+
+func (h *Handler) UpdateWithdrawalStatus(c *gin.Context) {
+	id := c.Param("id")
+	wID, err := uuid.Parse(id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid withdrawal id"})
+		return
+	}
+
+	var req approveReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var status string
+	switch req.Action {
+	case "approve":
+		status = "APPROVED"
+	case "reject":
+		status = "REJECTED"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "action must be 'approve' or 'reject'"})
+		return
+	}
+
+	if err := h.wallet.UpdateWithdrawalStatus(c.Request.Context(), wID, status); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "status": status})
+}
+
 func (h *Handler) RequestWithdrawal(c *gin.Context) {
 	var req withdrawReq
 	if err := c.ShouldBindJSON(&req); err != nil {
